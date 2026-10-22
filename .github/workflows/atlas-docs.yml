@@ -30,11 +30,11 @@ jobs:
   build:
     runs-on: ubuntu-latest
     env:
-      ATLAS_UPSTREAM: __UPSTREAM__
+      ATLAS_UPSTREAM: NginxProxyManager/nginx-proxy-manager
     steps:
       - uses: actions/checkout@v7
         with:
-          repository: __UPSTREAM__
+          repository: NginxProxyManager/nginx-proxy-manager
           fetch-depth: 1
       - uses: actions/setup-python@v6
         with:
