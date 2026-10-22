@@ -139,8 +139,8 @@ jobs:
           npm install -g pnpm@9 >/dev/null 2>&1 || true
           DIR="$(dirname "$CFG")"
           cd "$DIR"
-          (pnpm install --ignore-scripts --no-frozen-lockfile || npm install --no-audit --no-fund) >/dev/null 2>&1 || exit 0
-          (pnpm exec docusaurus build --out-dir "$GITHUB_WORKSPACE/_atlas_site_try" || npx docusaurus build --out-dir "$GITHUB_WORKSPACE/_atlas_site_try") || exit 0
+          (pnpm install --ignore-scripts --no-frozen-lockfile 2>&1 | tail -20 || npm install --no-audit --no-fund 2>&1 | tail -20) || exit 0
+          (pnpm exec docusaurus build --out-dir "$GITHUB_WORKSPACE/_atlas_site_try" 2>&1 || npx docusaurus build --out-dir "$GITHUB_WORKSPACE/_atlas_site_try" 2>&1) | tail -40 || exit 0
           rm -rf "$GITHUB_WORKSPACE/_atlas_site"; mv "$GITHUB_WORKSPACE/_atlas_site_try" "$GITHUB_WORKSPACE/_atlas_site"
 
       - name: Build · vitepress
@@ -165,8 +165,8 @@ jobs:
           PY
           DIR="$(dirname "$(dirname "$CFG")")"
           cd "$DIR"
-          (npm install --no-audit --no-fund || yarn install --frozen-lockfile) >/dev/null 2>&1 || exit 0
-          (npx vitepress build . || npx vitepress build) >/dev/null 2>&1 || exit 0
+          (npm install --no-audit --no-fund 2>&1 | tail -20 || yarn install --frozen-lockfile 2>&1 | tail -20) || exit 0
+          npx vitepress build . 2>&1 | tail -40 || exit 0
           if [ -f "$DIR/.vitepress/dist/index.html" ]; then
             rm -rf "$GITHUB_WORKSPACE/_atlas_site"; mv "$DIR/.vitepress/dist" "$GITHUB_WORKSPACE/_atlas_site"
           fi
@@ -186,7 +186,7 @@ jobs:
           except ImportError:
               raise SystemExit(0)
           site = pathlib.Path("_atlas_site"); site.mkdir(exist_ok=True)
-          root = pathlib.Path(".").resolve()
+          root = pathlib.Path(".")
           done, index = [], []
           for p in rst:
               rel = p.relative_to(root).as_posix()
