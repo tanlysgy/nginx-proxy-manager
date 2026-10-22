@@ -115,11 +115,11 @@ jobs:
         if: (steps.detect.outputs.docusaurus_cfg != '' || steps.detect.outputs.vitepress_cfg != '') && hashFiles('_atlas_site/index.html') == ''
         continue-on-error: true
         run: |
-          curl -sSL https://deb.nodesource.com/setup_22.x | sudo -E bash - >/dev/null 2>&1 || true
+          curl -sSL https://deb.nodesource.com/setup_24.x | sudo -E bash - >/dev/null 2>&1 || true
           sudo apt-get install -y nodejs >/dev/null 2>&1 || true
           node -v || true
           sudo corepack enable >/dev/null 2>&1 || true
-          corepack prepare pnpm@9 --activate >/dev/null 2>&1 || sudo npm install -g pnpm@9 >/dev/null 2>&1 || true
+          corepack prepare pnpm@latest --activate >/dev/null 2>&1 || sudo npm install -g pnpm@latest >/dev/null 2>&1 || true
           pnpm -v || true
       - name: Build · docusaurus
         if: steps.detect.outputs.docusaurus_cfg != '' && hashFiles('_atlas_site/index.html') == ''
@@ -167,8 +167,11 @@ jobs:
           cd "$DIR"
           (npm install --no-audit --no-fund 2>&1 | tail -20 || yarn install --frozen-lockfile 2>&1 | tail -20) || exit 0
           npx vitepress build . 2>&1 | tail -40 || exit 0
-          if [ -f "$DIR/.vitepress/dist/index.html" ]; then
-            rm -rf "$GITHUB_WORKSPACE/_atlas_site"; mv "$DIR/.vitepress/dist" "$GITHUB_WORKSPACE/_atlas_site"
+          # Vitepress writes to `.vitepress/dist` by default, but configs may
+          # override outDir (nginx-proxy-manager uses ./dist), so locate it.
+          OUT="$(find "$DIR" -maxdepth 2 -name index.html -not -path '*/node_modules/*' -not -path '*/src/*' | head -1)"
+          if [ -n "$OUT" ]; then
+            rm -rf "$GITHUB_WORKSPACE/_atlas_site"; mv "$(dirname "$OUT")" "$GITHUB_WORKSPACE/_atlas_site"
           fi
 
       - name: Fallback · render reStructuredText docs
