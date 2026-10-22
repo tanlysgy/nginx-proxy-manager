@@ -30,11 +30,11 @@ jobs:
   build:
     runs-on: ubuntu-latest
     env:
-      ATLAS_UPSTREAM: NginxProxyManager/nginx-proxy-manager
+      ATLAS_UPSTREAM: __UPSTREAM__
     steps:
       - uses: actions/checkout@v7
         with:
-          repository: NginxProxyManager/nginx-proxy-manager
+          repository: __UPSTREAM__
           fetch-depth: 1
       - uses: actions/setup-python@v6
         with:
@@ -49,11 +49,13 @@ jobs:
         run: |
           mkdocs_cfg="$(find . -maxdepth 3 -name 'mkdocs.yml' -o -maxdepth 3 -name 'mkdocs.yaml' | head -1)"
           book_cfg="$(find . -maxdepth 3 -name 'book.toml' | head -1)"
-          docusaurus_cfg="$(find . -maxdepth 3 \( -name 'docusaurus.config.js' -o -name 'docusaurus.config.ts' -o -name 'docusaurus.config.mjs' \) -not -path './site/*' | head -1)"
+          docusaurus_cfg="$(find . -maxdepth 5 \( -name 'docusaurus.config.js' -o -name 'docusaurus.config.ts' -o -name 'docusaurus.config.mjs' -o -name 'docusaurus.config.cjs' -o -name 'docusaurus.config.esm.mjs' \) -not -path '*/node_modules/*' -not -path './site/*' | head -1)"
+          vitepress_cfg="$(find . -maxdepth 5 -path '*/.vitepress/config.*' -not -path '*/node_modules/*' | head -1)"
           sphinx_cfg="$(find . -maxdepth 3 -name 'conf.py' -not -path '*/node_modules/*' | head -1)"
           { echo "mkdocs_cfg=$mkdocs_cfg"; echo "book_cfg=$book_cfg"
-            echo "docusaurus_cfg=$docusaurus_cfg"; echo "sphinx_cfg=$sphinx_cfg"; } >> "$GITHUB_OUTPUT"
-          echo "mkdocs=$mkdocs_cfg mdbook=$book_cfg docusaurus=$docusaurus_cfg sphinx=$sphinx_cfg"
+            echo "docusaurus_cfg=$docusaurus_cfg"; echo "sphinx_cfg=$sphinx_cfg"
+            echo "vitepress_cfg=$vitepress_cfg"; } >> "$GITHUB_OUTPUT"
+          echo "mkdocs=$mkdocs_cfg mdbook=$book_cfg docusaurus=$docusaurus_cfg sphinx=$sphinx_cfg vitepress=$vitepress_cfg"
           mkdir -p "$GITHUB_WORKSPACE/_atlas_site"
 
       - name: Build · mkdocs
@@ -110,7 +112,7 @@ jobs:
           cp -a "$OUT"/. "$GITHUB_WORKSPACE/_atlas_site/" 2>/dev/null || true
 
       - name: Setup node + pnpm
-        if: steps.detect.outputs.docusaurus_cfg != '' && hashFiles('_atlas_site/index.html') == ''
+        if: (steps.detect.outputs.docusaurus_cfg != '' || steps.detect.outputs.vitepress_cfg != '') && hashFiles('_atlas_site/index.html') == ''
         continue-on-error: true
         run: |
           curl -sSL https://deb.nodesource.com/setup_22.x | sudo -E bash - >/dev/null 2>&1 || true
@@ -140,6 +142,72 @@ jobs:
           (pnpm install --ignore-scripts --no-frozen-lockfile || npm install --no-audit --no-fund) >/dev/null 2>&1 || exit 0
           (pnpm exec docusaurus build --out-dir "$GITHUB_WORKSPACE/_atlas_site_try" || npx docusaurus build --out-dir "$GITHUB_WORKSPACE/_atlas_site_try") || exit 0
           rm -rf "$GITHUB_WORKSPACE/_atlas_site"; mv "$GITHUB_WORKSPACE/_atlas_site_try" "$GITHUB_WORKSPACE/_atlas_site"
+
+      - name: Build · vitepress
+        if: steps.detect.outputs.vitepress_cfg != '' && hashFiles('_atlas_site/index.html') == ''
+        continue-on-error: true
+        run: |
+          CFG="${{ steps.detect.outputs.vitepress_cfg }}"
+          REPO="${GITHUB_REPOSITORY#*/}"
+          python3 - "$CFG" "$REPO" <<'PY'
+          import re, sys
+          path, repo = sys.argv[1], sys.argv[2]
+          src = open(path, encoding="utf-8").read()
+          if re.search(r"base\s*:", src):
+              src = re.sub(r"base\s*:\s*['\"][^'\"]*['\"]", "base: '/%s/'" % repo, src, count=1)
+          else:
+              # Inject the base into the existing config object: a second default
+              # export would be a syntax error.
+              m = re.search(r"(defineConfig\s*\(\s*\{|export\s+default\s*\{|defineConfig\s*\(\s*$)", src)
+              if m:
+                  src = src[:m.end()] + ("\n  base: '/%s/'," % repo) + src[m.end():]
+          open(path, "w", encoding="utf-8").write(src)
+          PY
+          DIR="$(dirname "$(dirname "$CFG")")"
+          cd "$DIR"
+          (npm install --no-audit --no-fund || yarn install --frozen-lockfile) >/dev/null 2>&1 || exit 0
+          (npx vitepress build . || npx vitepress build) >/dev/null 2>&1 || exit 0
+          if [ -f "$DIR/.vitepress/dist/index.html" ]; then
+            rm -rf "$GITHUB_WORKSPACE/_atlas_site"; mv "$DIR/.vitepress/dist" "$GITHUB_WORKSPACE/_atlas_site"
+          fi
+
+      - name: Fallback · render reStructuredText docs
+        if: hashFiles('_atlas_site/index.html') == ''
+        run: |
+          python3 - <<'PY'
+          import pathlib, re, sys
+          rst = sorted(p for p in pathlib.Path(".").rglob("*.rst")
+                       if not any(part in ("node_modules", ".git") for part in p.parts)
+                       and not any(part.startswith(".") for part in p.parts))[:400]
+          if len(rst) < 2:
+              raise SystemExit(0)
+          try:
+              from docutils.core import publish_file
+          except ImportError:
+              raise SystemExit(0)
+          site = pathlib.Path("_atlas_site"); site.mkdir(exist_ok=True)
+          root = pathlib.Path(".").resolve()
+          done, index = [], []
+          for p in rst:
+              rel = p.relative_to(root).as_posix()
+              out = site / (re.sub(r"[^A-Za-z0-9]+", "-", rel).strip("-") + ".html")
+              try:
+                  publish_file(source_path=str(p), destination_path=str(out),
+                               writer_name="html5", settings_overrides={"report_level": 5, "halt_level": 5})
+              except Exception:
+                  continue
+              title = p.stem.replace("-", " ").replace("_", " ").strip().title()
+              done.append((rel, title, out.name))
+          if not done:
+              raise SystemExit(0)
+          rows = "\n".join('<li><a href="%s">%s</a> <code>%s</code></li>' % (o, t, r) for r, t, o in done)
+          (site / "index.html").write_text(
+              "<!doctype html><meta charset='utf-8'><title>Atlas docs mirror</title>"
+              "<style>body{font:16px/1.6 system-ui,sans-serif;max-width:52rem;margin:3rem auto;padding:0 1.25rem}"
+              "code{color:#666;font-size:.8em}li{margin:.35rem 0}a{color:#0b6bcb}</style>"
+              "<h1>Documentation index</h1><ul>%s</ul>" % rows, encoding="utf-8")
+          print("rst pages:", len(done), file=sys.stderr)
+          PY
 
       - name: Fallback · render Markdown docs with mkdocs
         if: hashFiles('_atlas_site/index.html') == ''
