@@ -163,7 +163,7 @@ jobs:
                   src = src[:m.end()] + ("\n  base: '/%s/'," % repo) + src[m.end():]
           open(path, "w", encoding="utf-8").write(src)
           PY
-          DIR="$(dirname "$(dirname "$CFG")")"
+          DIR="$(cd "$(dirname "$(dirname "$CFG")")" && pwd)"
           cd "$DIR"
           (npm install --no-audit --no-fund 2>&1 | tail -20 || yarn install --frozen-lockfile 2>&1 | tail -20) || exit 0
           npx vitepress build . 2>&1 | tail -40 || exit 0
